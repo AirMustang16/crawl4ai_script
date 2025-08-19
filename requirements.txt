@@ -1,0 +1,10 @@
+crawl4ai>=0.4.0
+pandas>=2.1
+python-dateutil>=2.9
+orjson>=3.9
+tqdm>=4.66
+pydantic>=2.7
+rapidfuzz>=3.5
+beautifulsoup4>=4.12
+lxml>=4.9
+python-dotenv>=1.0

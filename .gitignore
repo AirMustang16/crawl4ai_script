@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+.venv/
+
+# Env files
+.env.local
+.env.*.local
+# Data (optional to ignore raw/debug if large)
+data
+
+
