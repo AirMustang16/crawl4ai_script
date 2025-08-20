@@ -6,8 +6,10 @@ import pandas as pd
 from dateutil import parser as dateparser
 from rapidfuzz import fuzz
 
-RAW_DIR = "/Users/omar/projects/crawl4ai_script/data/raw"
-CLEAN_DIR = "/Users/omar/projects/crawl4ai_script/data/clean"
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+RAW_DIR = os.path.join(DATA_DIR, "raw")
+CLEAN_DIR = os.path.join(DATA_DIR, "clean")
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
 def iter_jsonl(path: str):

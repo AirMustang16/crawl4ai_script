@@ -19,9 +19,12 @@ from crawl4ai import (
     JsonCssExtractionStrategy,
 )
 
-RAW_DIR = "/Users/omar/projects/crawl4ai_script/data/raw"
+# Resolve data directories relative to repository root (one level up from scripts/)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+RAW_DIR = os.path.join(DATA_DIR, "raw")
+DEBUG_DIR = os.path.join(DATA_DIR, "debug")
 os.makedirs(RAW_DIR, exist_ok=True)
-DEBUG_DIR = "/Users/omar/projects/crawl4ai_script/data/debug"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
 # G2 consent banner accept
