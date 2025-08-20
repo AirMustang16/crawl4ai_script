@@ -2,11 +2,10 @@ import os
 import json
 import asyncio
 from typing import Any, Dict, List, Optional
-from datetime import datetime
 import re
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
+from datetime import datetime
 
-from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 # Load .env early
@@ -18,15 +17,11 @@ from crawl4ai import (
     CrawlerRunConfig,
     CacheMode,
     JsonCssExtractionStrategy,
-    LLMExtractionStrategy,
-    LLMConfig,
 )
-from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
-from crawl4ai.content_filter_strategy import PruningContentFilter
 
 RAW_DIR = "/Users/omar/projects/crawl4ai_script/data/raw"
-DEBUG_DIR = "/Users/omar/projects/crawl4ai_script/data/debug"
 os.makedirs(RAW_DIR, exist_ok=True)
+DEBUG_DIR = "/Users/omar/projects/crawl4ai_script/data/debug"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
 # G2 consent banner accept
@@ -177,66 +172,7 @@ SA_NEXT_PAGE_JS = """
 })();
 """
 
-# Navigation log injector: clicks Next (excluding .back), logs before/after into #c4ai-nav-log
-SA_NAV_LOG_JS = """
-(async () => {
-  const delay = (ms) => new Promise(r => setTimeout(r, ms));
-  const firstTitleSel = '#reviews-list [data-testid=\\"textReview\\"] p.text-2xl.font-bold';
-  const contSel = '#generatedResults > span > section.gap\\:3.flex.justify-between.sm\\:justify-start.sm\\:gap-2\\.5';
-
-  function readCounterText() {
-    const el = Array.from(document.querySelectorAll('body *'))
-      .find(n => /Showing\s+\d+\s*[-–]\s*\d+\s+of\s+\d+/i.test(n.textContent || ''));
-    return el ? el.textContent.trim() : '';
-  }
-
-  const before = {
-    firstTitle: document.querySelector(firstTitleSel)?.textContent?.trim() || '',
-    counterText: readCounterText()
-  };
-
-  // Ensure pager visible
-  window.scrollTo(0, document.body.scrollHeight);
-  await delay(300);
-
-  const cont = document.querySelector(contSel);
-  const buttons = cont ? Array.from(cont.querySelectorAll('button')) : [];
-  // Exclude buttons with class 'back'
-  const candidates = buttons.filter(el => !el.classList.contains('back'));
-  let btn = candidates.find(el => /next|›|→/i.test((el.textContent||'').trim())) || candidates[candidates.length - 1] || null;
-
-  const logEl = document.getElementById('c4ai-nav-log') || (function(){ const s = document.createElement('span'); s.id = 'c4ai-nav-log'; s.style.display='none'; document.body.appendChild(s); return s; })();
-
-  if (!btn) {
-    logEl.textContent = JSON.stringify({ action: 'no-button', before });
-    return false;
-  }
-
-  const btnInfo = { text: (btn.textContent||'').trim(), classes: btn.className };
-  btn.scrollIntoView({behavior: 'instant', block: 'center'});
-  try { btn.click(); } catch(e) {}
-
-  // Wait for either counter or firstTitle to change
-  let changed = false;
-  for (let i = 0; i < 20; i++) {
-    await delay(500);
-    const nowTitle = document.querySelector(firstTitleSel)?.textContent?.trim() || '';
-    const nowCounter = readCounterText();
-    if ((before.firstTitle && nowTitle && nowTitle !== before.firstTitle) || (before.counterText && nowCounter && nowCounter !== before.counterText)) {
-      changed = true; break;
-    }
-  }
-
-  const after = {
-    firstTitle: document.querySelector(firstTitleSel)?.textContent?.trim() || '',
-    counterText: readCounterText(),
-    changed
-  };
-  logEl.textContent = JSON.stringify({ action: 'clicked-next', btn: btnInfo, before, after });
-  if (changed) { window.scrollTo(0, 0); await delay(200); }
-  return changed;
-})();
-"""
+# Removed SA_NAV_LOG_JS (not used)
 
 # Schema to extract the nav log and quick state after a nav click
 SA_NAV_LOG_SCHEMA = {
@@ -249,19 +185,7 @@ SA_NAV_LOG_SCHEMA = {
     ]
 }
 
-class ReviewItem(BaseModel):
-    title: Optional[str] = Field(None)
-    body: Optional[str] = Field(None)
-    author: Optional[str] = Field(None)
-    date: Optional[str] = Field(None)
-    rating: Optional[float] = Field(None)
-    pros: Optional[str] = None
-    cons: Optional[str] = None
-
-LLM_ARRAY_SCHEMA = {
-    "type": "array",
-    "items": ReviewItem.model_json_schema(),
-}
+# (Removed unused ReviewItem and LLM schema)
 
 CLICK_MORE_JS = """
 (async () => {
@@ -388,16 +312,7 @@ async def extract_with_css(crawler, url: str, schema: Dict[str, Any], session_id
 
     print(f"[STEP] Load page (CSS) -> {url}")
     res = await crawler.arun(url=url, config=run_conf)
-    try:
-        md = getattr(res, "markdown", None)
-        raw_md = getattr(md, "raw_markdown", None)
-        if raw_md:
-            p = _debug_path(dom, "initial_markdown")
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(raw_md)
-            print(f"[DEBUG] Saved markdown snapshot: {p}")
-    except Exception:
-        pass
+    # simplified: no debug snapshot
 
     if res.success and res.extracted_content:
         try:
@@ -444,27 +359,9 @@ async def extract_with_css(crawler, url: str, schema: Dict[str, Any], session_id
         agg, _ = merge_items([], all_items)
         for page_idx in range(1, pages_to_scrape):
             print(f"[STEP] Go to next page #{page_idx+1}")
-            nav_conf = run_conf.clone(js_only=True, js_code=[SA_NAV_LOG_JS])
-            res_nav = await crawler.arun(url=url, config=nav_conf)
-            navlog_conf = CrawlerRunConfig(
-                cache_mode=CacheMode.BYPASS,
-                session_id=session_id,
-                page_timeout=int(os.getenv("PAGE_TIMEOUT_MS", "90000")),
-                wait_for=READY_SELECTORS.get(dom, "body"),
-                wait_for_timeout=int(os.getenv("WAIT_FOR_TIMEOUT_MS", "45000")),
-                extraction_strategy=JsonCssExtractionStrategy(SA_NAV_LOG_SCHEMA),
-            )
-            res_log = await crawler.arun(url=url, config=navlog_conf)
-            if res_log.success and res_log.extracted_content:
-                try:
-                    logs = json.loads(res_log.extracted_content)
-                    if logs and isinstance(logs, list):
-                        entry = logs[0]
-                        raw_log = entry.get('nav_log') or ''
-                        if raw_log:
-                            print(f"[NAVLOG] {raw_log}")
-                except Exception:
-                    pass
+            # Simplified: click Next and then re-extract
+            nav_conf = run_conf.clone(js_only=True, js_code=[SA_NEXT_PAGE_JS])
+            await crawler.arun(url=url, config=nav_conf)
             res_next = await crawler.arun(url=url, config=run_conf)
             got: List[Dict[str, Any]] = []
             if res_next.success and res_next.extracted_content:
@@ -520,128 +417,21 @@ async def extract_with_css(crawler, url: str, schema: Dict[str, Any], session_id
                 break
         all_items = agg
     else:
-        # Generic in-page click strategy approximated by pages_to_scrape-1 clicks
-        clicks_to_try = max(0, pages_to_scrape - 1)
-        for i in range(clicks_to_try):
-            more_conf = run_conf.clone(js_only=True, js_code=[CLICK_MORE_JS])
-            print(f"[STEP] Click 'Load more/Next' #{i+1}")
-            res = await crawler.arun(url=url, config=more_conf)
-            try:
-                md = getattr(res, "markdown", None)
-                raw_md = getattr(md, "raw_markdown", None)
-                if raw_md:
-                    p = _debug_path(dom, f"click_{i+1:02d}_markdown")
-                    with open(p, "w", encoding="utf-8") as f:
-                        f.write(raw_md)
-                    print(f"[DEBUG] Saved markdown snapshot: {p}")
-            except Exception:
-                pass
-            if not res.success:
-                print("[WARN] Click resulted in unsuccessful response; stopping clicks.")
-                break
-            got: List[Dict[str, Any]] = []
-            if res.extracted_content:
-                try:
-                    got = json.loads(res.extracted_content)
-                except Exception:
-                    got = []
-            print(f"[STEP] Items after click {i+1}: {len(got)} (prev {len(all_items)})")
-            if not got or (len(got) <= len(all_items)):
-                print("[STEP] No additional reviews detected; stopping clicks.")
-                break
-            all_items = got
+        # No generic pagination currently
+        pass
 
     return all_items
 
-async def extract_with_llm(crawler, url: str, session_id: str, dom: str, provider: str = "ollama/llama3.3", api_token: Optional[str] = None) -> List[Dict[str, Any]]:
-    md_gen = DefaultMarkdownGenerator(content_filter=PruningContentFilter(threshold=0.35, threshold_type="fixed"))
-    llm_conf = LLMConfig(provider=provider, api_token=api_token)
-
-    run_conf = CrawlerRunConfig(
-        cache_mode=CacheMode.BYPASS,
-        session_id=session_id,
-        page_timeout=int(os.getenv("PAGE_TIMEOUT_MS", "90000")),
-        wait_for=READY_SELECTORS.get(dom, "body"),
-        wait_for_timeout=int(os.getenv("WAIT_FOR_TIMEOUT_MS", "45000")),
-        markdown_generator=md_gen,
-        extraction_strategy=LLMExtractionStrategy(
-            llm_config=llm_conf,
-            schema=LLM_ARRAY_SCHEMA,
-            extraction_type="schema",
-            instruction=(
-                "Extract ALL reviews present on the page into an array. "
-                "For each item, include: title, body, author, date, rating (0-5 if present), pros, cons. "
-                "Do not summarize; capture faithfully."
-            ),
-            extra_args={"temperature": 0, "top_p": 0.9, "max_tokens": 4000},
-        ),
-    )
-
-    print(f"[STEP] Load page (LLM) -> {url}")
-    res_items: List[Dict[str, Any]] = []
-    res = await crawler.arun(url=url, config=run_conf)
-
-    try:
-        md = getattr(res, "markdown", None)
-        raw_md = getattr(md, "raw_markdown", None)
-        if raw_md:
-            p = _debug_path(dom, "llm_initial_markdown")
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(raw_md)
-            print(f"[DEBUG] Saved markdown snapshot: {p}")
-    except Exception:
-        pass
-
-    if res.success and res.extracted_content:
-        try:
-            res_items = json.loads(res.extracted_content)
-        except Exception:
-            res_items = []
-
-    # Use pages_to_scrape for LLM too (approximate via re-extractions)
-    pages_to_scrape = get_pages_to_scrape()
-    for i in range(max(0, pages_to_scrape - 1)):
-        more_conf = run_conf.clone(js_only=True, js_code=[CLICK_MORE_JS])
-        print(f"[STEP] Click 'Load more/Next' (LLM) #{i+1}")
-        res = await crawler.arun(url=url, config=more_conf)
-        try:
-            md = getattr(res, "markdown", None)
-            raw_md = getattr(md, "raw_markdown", None)
-            if raw_md:
-                p = _debug_path(dom, f"llm_click_{i+1:02d}_markdown")
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(raw_md)
-                print(f"[DEBUG] Saved markdown snapshot: {p}")
-        except Exception:
-            pass
-        got = []
-        if res.success and res.extracted_content:
-            try:
-                got = json.loads(res.extracted_content)
-            except Exception:
-                got = []
-        if not got or (len(got) <= len(res_items)):
-            print("[STEP] No additional reviews detected (LLM); stopping clicks.")
-            break
-        res_items = got
-
-    return res_items
+async def extract_with_llm(*args, **kwargs):  # keep symbol for compatibility; no-op
+    return []
 
 
 def dump_files(prefix: str, rows: List[Dict[str, Any]]):
     jsonl = os.path.join(RAW_DIR, f"{prefix}.jsonl")
-    csvp = os.path.join(RAW_DIR, f"{prefix}.csv")
     with open(jsonl, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    import csv
-    keys = sorted({k for r in rows for k in r.keys()}) if rows else []
-    with open(csvp, "w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=keys)
-        w.writeheader()
-        for r in rows:
-            w.writerow(r)
-    print(f"[OK] wrote {jsonl} and {csvp} | rows={len(rows)}")
+    print(f"[OK] wrote {jsonl} | rows={len(rows)}")
 
 async def crawl_one(url: str) -> List[Dict[str, Any]]:
     dom = domain_from_url(url)
@@ -660,18 +450,7 @@ async def crawl_one(url: str) -> List[Dict[str, Any]]:
         if schema:
             items = await extract_with_css(crawler, url, schema, session_id, dom)
 
-        enable_llm = os.getenv("ENABLE_LLM_FALLBACK", "0") == "1"
-        if enable_llm and len(items) < 5:
-            llm_items = await extract_with_llm(
-                crawler,
-                url,
-                session_id,
-                dom=dom,
-                provider=os.getenv("LLM_PROVIDER", "ollama/llama3.3"),
-                api_token=os.getenv("LLM_API_TOKEN") or None,
-            )
-            if len(llm_items) > len(items):
-                items = llm_items
+        # LLM fallback removed
 
         for it in items:
             it.setdefault("source_url", url)

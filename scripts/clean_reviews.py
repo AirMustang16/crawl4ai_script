@@ -136,14 +136,12 @@ def clean_file(path: str, out_prefix: str):
         df = df.sort_values(by=["date"], ascending=True, na_position="last")
 
     out_jsonl = os.path.join(CLEAN_DIR, f"{out_prefix}_clean.jsonl")
-    out_csv = os.path.join(CLEAN_DIR, f"{out_prefix}_clean.csv")
 
     with open(out_jsonl, "w", encoding="utf-8") as f:
         for _, row in df.iterrows():
             f.write(orjson.dumps({k: v for k, v in row.dropna().to_dict().items()}).decode() + "\n")
 
-    df.to_csv(out_csv, index=False)
-    print(f"[OK] wrote {out_jsonl} and {out_csv} | rows={len(df)}")
+    print(f"[OK] wrote {out_jsonl} | rows={len(df)}")
 
 
 def main():
