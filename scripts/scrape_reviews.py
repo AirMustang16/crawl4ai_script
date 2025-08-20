@@ -453,7 +453,6 @@ async def crawl_one(url: str) -> List[Dict[str, Any]]:
         if schema:
             items = await extract_with_css(crawler, url, schema, session_id, dom)
 
-        # LLM fallback removed
 
         for it in items:
             it.setdefault("source_url", url)
